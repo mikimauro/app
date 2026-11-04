@@ -1,0 +1,59 @@
+name: Ritrova Android - APK di prova
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Ricostruisci e verifica sorgenti
+        shell: bash
+        run: |
+          cat archive/part0{1..4}.b64 | base64 --decode > /tmp/ritrova-sources.tar.xz
+          echo "a9e2010c4010fa1c6391720409d2797f2977a58e31bee4d2c93f6c58101528ef  /tmp/ritrova-sources.tar.xz" | sha256sum --check
+          tar -xJf /tmp/ritrova-sources.tar.xz
+          test -f app/src/main/java/it/ritrova/app/MainActivity.java
+      - name: Rendi consultabili i sorgenti su GitHub
+        continue-on-error: true
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f app build.gradle settings.gradle gradle.properties gradle/wrapper/gradle-wrapper.properties tests/CryptoSmokeTest.java tests/static_project_check.py .gitignore
+          if ! git diff --staged --quiet; then
+            git commit -m "Add extracted native Ritrova Android source code"
+            git push origin HEAD:main
+          fi
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - name: Installa Android SDK
+        run: |
+          sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Controlli statici
+        run: python3 tests/static_project_check.py
+      - name: Test della cifratura
+        run: |
+          mkdir -p tests/build
+          javac -d tests/build app/src/main/java/it/ritrova/app/PortableCrypto.java tests/CryptoSmokeTest.java
+          java -cp tests/build CryptoSmokeTest
+      - name: Compila APK Android
+        run: gradle --no-daemon --stacktrace :app:assembleDebug
+      - name: Verifica APK
+        run: test -s app/build/outputs/apk/debug/app-debug.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Ritrova-Android-APK
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 30
